@@ -1,9 +1,10 @@
 <!doctype html>
 <html>
   <head>
+    <title>Twine story visualiser</title>
     <style>
       /*html, body, #twine-graph {height: 100%; width:100%;margin:0;padding:0;}*/
-      body { background-color: black; font-size: 0.8rem; font-family: sans-serif; color: white; }
+      body { background-color: black; font-size: 1rem; font-family: sans-serif; color: white; }
       .links line {stroke: #aaa;}
       .links line.highlighted {stroke: #f00;}
       .nodes rect { fill: black; stroke: #aaa; stroke-width: 3px; }
@@ -18,8 +19,8 @@
     <script src="https://d3js.org/d3.v6.min.js"></script>
     <script>
       const TWINE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
-      const NODE_WIDTH = 192;
-      const NODE_HEIGHT = 144;
+      const NODE_WIDTH = 128;
+      const NODE_HEIGHT = 64;
       const ANIMATION_DURATION_MS = 500;
       const ANIMATION_EASING = d3.easeQuadInOut;
       const NAV_SYMBOL_SIZE = 20;
@@ -192,9 +193,9 @@
 
       function nodeEnter(enter) {
         const nodeGroup = enter.append("g").attr("class", "node");
-        nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
+        nodeGroup.append("rect").attr("width", NODE_WIDTH).attr("height", NODE_HEIGHT);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100)).on("click", (ev, d) => toggleLinearDisplay(d));
+                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id).on("click", (ev, d) => toggleLinearDisplay(d));
         const pathControls = nodeGroup.append("g").attr("class", "path-controls").attr("transform", "translate(0,-15)");
         pathControls.append("use").attr("xlink:href", "#leftarrow").on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, -1)})
         pathControls.append("use").attr("xlink:href", "#rightarrow").attr("x", 100-NAV_SYMBOL_SIZE).on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, 1)})
@@ -204,7 +205,7 @@
 
       function nodeUpdate(update) {
         update.transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
-               .style("opacity", d => nodeVisibility(d) ? 1 : 0.2)
+               .style("opacity", d => nodeVisibility(d) ? 1 : 0.12)
                .attr("transform", d => `translate(${nodeX(d)},${nodeY(d)})`);
         update.select("g.path-controls")
                .attr("opacity", d => currentDisplayMode === DISPLAY_MODES.linear && nodeVisibility(d) && highlightedPath.getLinksAtDepth(highlightedPath.getNodeDepth(d)-1).length > 1 ? 1 : 0);

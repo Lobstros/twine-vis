@@ -14,23 +14,122 @@
     <svg id="twine-graph" xmlns:xhtml="http://www.w3.org/1999/xhtml"></svg>
     <script src="https://d3js.org/d3.v6.min.js"></script>
     <script>
-      const TWINE_FILE_PATH = "Quack of Duckness.html";
-      const TWINE_PASSAGEDATA_LITERAL_LINK_REGEX = /\[\[(?<target>[A-Za-z0-9 _]+)\]\]/g;
-      const TWINE_PASSAGEDATA_RIGHT_LINK_REGEX = /\[\[(?<value>[A-Za-z0-9 _]+)->(?<target>[A-Za-z0-9 _]+)\]\]/g;
-      const TWINE_PASSAGEDATA_LEFT_LINK_REGEX = /\[\[(?<target>[A-Za-z0-9 _]+)<-(?<value>[A-Za-z0-9 _]+)\]\]/g;
+      const TWINE_FILE_PATH = "Stink Bug Plague.html";
+      const TWINE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
       const NODE_WIDTH = 192;
       const NODE_HEIGHT = 144;
+      const ANIMATION_DURATION_MS = 500;
+      const ANIMATION_EASING = d3.easeQuadInOut;
+
+      const DISPLAY_MODES = Object.freeze({
+        allNodes:   Symbol("allNodes"),
+        linear:  Symbol("linear")
+      });
+      let currentDisplayMode = DISPLAY_MODES.allNodes;
+
+      class StoryNode {
+
+        constructor(htmlElem) {
+          const xyPositions = htmlElem.getAttribute("position").split(",", 2);
+          const xySizes = htmlElem.getAttribute("size").split(",", 2);
+          this.pid = htmlElem.getAttribute("pid");
+          this.id = htmlElem.getAttribute("name");  // CONFUSION WARNING. Only called "id" for compatibility with d3-force!
+          this.text = htmlElem.innerText;
+          this.x = parseInt(xyPositions[0]);
+          this.y = parseInt(xyPositions[1]);
+          this.width = parseInt(xySizes[0]);
+          this.height = parseInt(xySizes[0]);
+          this.links = StoryNode.#parseLinks(this.text, this.id);
+        }
+
+        static #parseLinks(nodeText, source_id) {
+          let links = [];
+          let linkComponents;
+          const linkTexts = Array.from(nodeText.matchAll(TWINE_PASSAGEDATA_LINK_REGEX)).map(res => res[1]);  // Return first group (link text) only
+          links = linkTexts.map( linkText => {
+            linkComponents = linkText.split("->");
+            if (linkComponents.length > 1) return {"target": linkComponents[1], "value": linkComponents[0], "source":source_id}
+            linkComponents = linkText.split("<-");
+            if (linkComponents.length > 1) return {"target": linkComponents[0], "value": linkComponents[1], "source":source_id}
+            return {"target": linkText, "value": linkText, "source":source_id}
+          })
+          return links;
+        }
+
+      }
+
+      class StoryPath {
+        // Wraps an ordered list of Links that define a legal path through StoryNodes,
+        // with helper functions to shift any of these links to neighbours that the reculculates a valid path below it.
+        //TODO: Intelligently handle loops
+        constructor(rootNode) {
+          this.linkPath = rootNode ? this.calcPath(rootNode) : [];
+        }
+
+        calcPath(rootNode) {
+          let linkPath = [];
+          if (rootNode.links.length === 0) return linkPath;
+          let currentLink = rootNode.links[0];
+          const NEXT_INDEX = 0;
+          // TODO: This is the section that loops really mess up
+          do {
+            linkPath.push(currentLink);
+          } while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[NEXT_INDEX]) );
+          return linkPath;
+        }
+
+        getPath() {
+          return this.linkPath;
+        }
+
+        getHeadNode() {
+          return this.linkPath.length > 0 ? this.linkPath[0].sourceNode : null;
+        }
+
+        swapToAdjacentLink(nodeObj, distance) {
+          // We're passed a node that the user wants to switcheroo for an adjacent one.
+          // We need to find the index of the link in our array that corresponds to the one linking it to its parent.
+          const linkDepth = this.linkPath.findIndex( link => link.targetNode === nodeObj );
+          const linkToShift = this.linkPath[linkDepth];
+          const parentNode = linkToShift.sourceNode;
+          const oldLinkIdx = parentNode.links.indexOf(linkToShift);
+          const numLinks = parentNode.links.length;
+          const newLinkIdx = (oldLinkIdx + distance) % numLinks;
+          // Get link one along in parents child array at requested depth
+          const newLink = parentNode.links[newLinkIdx];
+          // Slice off everything below old node's parent
+          this.linkPath = this.linkPath.slice(0, linkDepth);
+          // Stick on new calculated tree
+          this.linkPath.push(newLink);
+          this.linkPath = this.linkPath.concat(this.calcPath(newLink.targetNode));
+        }
+
+        containsNode(nodeObj) {
+          return [this.linkPath[0].sourceNode].concat(this.linkPath.map(link => link.targetNode)).includes(nodeObj);
+        }
+
+        getNodeDepth(nodeObj) {
+          // Nodes take the depth of the link they are a parent of, or 1 + the previous if at the end of the path.
+          const pathLength = this.linkPath.length;
+          if (pathLength === 0) return 0;
+          if (nodeObj === this.linkPath[pathLength-1].targetNode) return pathLength;
+          return this.linkPath.findIndex( link => link.sourceNode === nodeObj );
+        }
+
+      }
+
       const parser = new DOMParser();
-
-      let dragging = false;
-      document.getElementById("twine-graph").addEventListener( "mousedown", e => dragging=true )
-
       const svg = d3.select("svg");
+      const nodesG = svg.append("g").attr("class", "nodes");
+      const linksG = svg.append("g").attr("class", "links");
+      let highlightedPath = new StoryPath();
+      let links;
+      let nodes;
 
       function loadVis(twineDoc) {
         const storyData = twineDoc.getElementsByTagName("tw-storydata")[0];
         // Make "node" objects from XML file
-        const nodes = Array.from(storyData.getElementsByTagName("tw-passagedata")).map(elem => passageDataElemToObj(elem));
+        nodes = Array.from(storyData.getElementsByTagName("tw-passagedata")).map(elem => new StoryNode(elem));
 
         // Create a handy map of nodes from node names for fast lookup.
         const nodeMapByName = new Map();
@@ -38,9 +137,8 @@
 
         // Links between nodes are currently children of "from" nodes themselves.
         // We need to grab them into a separate array to pass to d3.
-        let links = [];
+        links = [];
         nodes.forEach( node => links.push(...node.links));
-        console.log(links);
 
         // Link nodes up
         links.forEach( link => { link.sourceNode = nodeMapByName.get(link.source); link.targetNode = nodeMapByName.get(link.target); } )
@@ -48,118 +146,112 @@
         //We need to work out where to plot each node by link depth from the start
         annotateNodesByDepth(nodes);
 
-        const link = svg.append("g").attr("class", "links").selectAll("line").data(links).join(linkEnter);
-        const node = svg.append("g").attr("class", "nodes").selectAll("circle").data(nodes).join(nodeEnter)
-                        .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
-
-        function linkEnter(enter) {
-          return enter.append("line").attr("id", d=>"link-"+d.sourceNode.pid+"-"+d.targetNode.pid)
-                                     .attr("x1", d=>d.sourceNode.x + clamp(d.targetNode.x+d.targetNode.width/2, d.sourceNode.x, d.sourceNode.width))
-                                     .attr("y1", d=>d.sourceNode.y)
-                                     .attr("x2", d=>d.targetNode.x + clamp(d.sourceNode.x+d.sourceNode.width/2, d.targetNode.x, d.targetNode.width))
-                                     .attr("y2", d=>d.targetNode.y);
-        }
-
-        function nodeEnter(enter) {
-          const nodeGroup = enter.append("g").attr("transform", d => `translate(${d.x},${d.y})`);
-          nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
-          nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                   .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100));
-          nodeGroup.on("mouseover", (ev, d) => downstreamHighlight(d, true) )
-                   .on("mouseout", (ev, d) => downstreamHighlight(d, false) );
-          return nodeGroup;
-        }
-
-        function nodeUpdate(update) {
-               update.select("g").transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
-                      .attr("visibility", d => d.isBelowHighestCollapsed() ? "hidden" : "visible")
-               .attr("class", nodeClass)
-               .attr("x", nodeXPos)
-               .attr("y", d=>SYMBOL_HALFHEIGHT*(d.top()))
-               .attr("height", d=>SYMBOL_HALFHEIGHT*(d.height()));
-        }
-
         const width = Math.max(...nodes.map(node => node.x+node.width))
-        console.log(width)
         svg.style("width", Math.max(...nodes.map(node => node.x+node.width))+'px');
         svg.style("height", Math.max(...nodes.map(node => node.y+node.height))+'px');
+
+        drawNetwork();
       }
 
-      function downstreamHighlight(d, highlightState) {
-        if (d.links.length === 0) return;
-        //const highlightLinks = new Set();
-        //let currentLink = d.links[0];
-        //do {
-        //  highlightLinks.add(currentLink);
-        //} while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[0]) );
-        const highlightLinks = new DownstreamPath(d).getPath();
-        console.log(highlightLinks);
+      function drawNetwork() {
+        const link = linksG.selectAll("line").data(links).join(linkEnter, linkUpdate);
+        const node = nodesG.selectAll("g").data(nodes).join(nodeEnter, nodeUpdate)
+        //                .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
+      }
+
+      function linkEnter(enter) {
+        const linkLine = enter.append("line")
+        linkLine.attr("id", d=>"link-"+d.sourceNode.pid+"-"+d.targetNode.pid)
+        linkUpdate(linkLine);
+      }
+
+      function linkUpdate(update) {
+        update.transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
+              //.attr("x1", d=>d.sourceNode.x + clamp(d.targetNode.x+d.targetNode.width/2, d.sourceNode.x, d.sourceNode.width))
+              //.attr("y1", d=>d.sourceNode.y)
+              //.attr("x2", d=>d.targetNode.x + clamp(d.sourceNode.x+d.sourceNode.width/2, d.targetNode.x, d.targetNode.width))
+              //.attr("y2", d=>d.targetNode.y);
+              .attr("x1", d=>nodeX(d.sourceNode) + d.sourceNode.width/2)
+              .attr("y1", d=>nodeY(d.sourceNode) + d.sourceNode.height/2)
+              .attr("x2", d=>nodeX(d.targetNode) + d.targetNode.width/2)
+              .attr("y2", d=>nodeY(d.targetNode) + d.targetNode.height/2)
+              .attr("visibility", currentDisplayMode === DISPLAY_MODES.allNodes ? "visible" : "hidden");
+      }
+
+      function nodeEnter(enter) {
+        const nodeGroup = enter.append("g");
+        nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
+        nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
+                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100));
+        nodeGroup.on("click", (ev, d) => toggleLinearDisplay(d))
+                 .on("wheel", (ev, d) => shiftLinearPath(d));
+        nodeUpdate(nodeGroup);
+        return nodeGroup;
+      }
+
+      function nodeUpdate(update) {
+        update.transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
+               .style("opacity", d => nodeVisibility(d) ? 1 : 0)
+               .attr("transform", d => `translate(${nodeX(d)},${nodeY(d)})`);
+        return update;
+      }
+
+      function toggleLinearDisplay(d) {
+        highlight(highlightedPath, false);
+        if (currentDisplayMode === DISPLAY_MODES.linear && d === highlightedPath.getHeadNode()) {
+          currentDisplayMode=DISPLAY_MODES.allNodes;
+          drawNetwork();
+          return;
+        }
+        highlightedPath = new StoryPath(d);
+        if (highlightedPath.getPath().length > 0) {  // Deny zero-length paths (they don't calc/render properly)
+          currentDisplayMode = DISPLAY_MODES.linear;
+        } else {
+          currentDisplayMode = DISPLAY_MODES.allNodes;
+        }
+        highlight(highlightedPath, true);
+        drawNetwork();
+      }
+
+      function shiftLinearPath(d) {
+        highlight(highlightedPath, false);
+        highlightedPath.swapToAdjacentLink(d, 1);
+        //highlight(highlightedPath, true);
+        drawNetwork();
+      }
+
+      function nodeX(d){
+        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+          return d.x
+        } else {
+          return highlightedPath.getHeadNode().x;
+        }
+      }
+
+      function nodeY(d) {
+        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+          return d.y
+        } else {
+          return highlightedPath.getHeadNode().y + 120*highlightedPath.getNodeDepth(d) || 0;  // O if it'll be hidden anyway
+        }
+      }
+
+      function nodeVisibility(d) {
+        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+          return true;
+        } else {
+          return highlightedPath.containsNode(d);
+        }
+      }
+
+      function highlight(path, highlightState) {
+        if (!path) return;
+        const highlightLinks = path.getPath();
         if (highlightState === true) {
           highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.add("highlighted"));
         } else {
           highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.remove("highlighted"));
         }
-      }
-
-      class DownstreamPath {
-        constructor(rootNode) {
-          this.linkPath = this.calcPath(rootNode);
-        }
-        calcPath(rootNode) {
-          this.linkPath = [];
-          let currentLink = rootNode.links[0];
-          const NEXT_INDEX = 0;
-          do {
-            this.linkPath.push(currentLink);
-          } while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[NEXT_INDEX]) );
-          return this.linkPath;
-        }
-        getPath() {
-          return this.linkPath;
-        }
-        switchLinkLeft(linkDepth) {
-          // Get node one along in parents child array at requested depth
-          const oldNode = this.linkPath[linkDepth];
-          const oldNodeParent = this.linkPath[linkDepth-1];
-          const oldNodeIdx = oldNodeParent.links.findIndex(oldNode);
-          const newNode = oldNodeParent.links[oldNodeIdx + 1 % oldNodeParent.links.length];
-          // Slice off everything below old node's parent
-          this.linkPath = this.linkPath.slice(0, linkDepth);
-          // Stick on new calculated tree
-          this.linkPath = this.linkPath.concat(this.getPath(newNode));
-        }
-        switchLinkRight(linkDepth) {
-
-        }
-      }
-
-      function passageDataElemToObj(elem) {
-        const xyPositions = elem.getAttribute("position").split(",", 2);
-        const xySizes = elem.getAttribute("size").split(",", 2);
-        const node = {
-          "pid": elem.getAttribute("pid"),
-          "id": elem.getAttribute("name"),  // CONFUSION WARNING. Only called "id" for compatibility with d3-force!
-          "text": elem.innerText,
-          "x": parseInt(xyPositions[0]),
-          "y": parseInt(xyPositions[1]),
-          "width": parseInt(xySizes[0]),
-          "height": parseInt(xySizes[0]),
-        }
-        node.links = passageDataElemToLinks(node)
-        return node;
-      }
-
-      function passageDataElemToLinks(node) {
-        let links = [];
-        const literalLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_LITERAL_LINK_REGEX));
-        const rightLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_RIGHT_LINK_REGEX));
-        const leftLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_LEFT_LINK_REGEX));
-        links.push(
-                ...literalLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.target, "source":node.id}) ),
-                ...rightLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value, "source":node.id}) ),
-                ...leftLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value, "source":node.id}) )
-        );
-        return links;
       }
 
       function annotateNodesByDepth(nodes) {
@@ -174,17 +266,19 @@
         firstNode.links.forEach(link => recurseAnnotate(link.targetNode, 1));
       }
 
-      function dragstarted(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
-      function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
-      function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
+      //let dragging = false;
+      //document.getElementById("twine-graph").addEventListener( "mousedown", e => dragging=true )
+      //function dragstarted(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+      //function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
+      //function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
 
-      function createSvgForeignTextObject(text) {
-
-      }
       fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
+
       function clamp(val, max, min) {
         return Math.min(Math.max(val,max),min);
       }
+
+
     </script>
   </body>
 </html>

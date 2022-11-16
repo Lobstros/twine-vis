@@ -2,12 +2,12 @@
 <html>
   <head>
     <style>
-      html, body, #twine-graph {height: 100%; width:100%;margin:0;padding:0;}
-      body { background-color: black; }
+      /*html, body, #twine-graph {height: 100%; width:100%;margin:0;padding:0;}*/
+      body { background-color: black; font-size: 0.8rem; }
       .links line {stroke: #aaa;}
+      .links line.highlighted {stroke: #f00;}
       .nodes rect {fill: black; stroke: #aaa; stroke-width: 3px;}
       .nodes div {color: white;}
-      p {color:white;}
     </style>
   </head>
   <body>
@@ -22,18 +22,10 @@
       const NODE_HEIGHT = 144;
       const parser = new DOMParser();
 
+      let dragging = false;
+      document.getElementById("twine-graph").addEventListener( "mousedown", e => dragging=true )
+
       const svg = d3.select("svg");
-      const width = svg.node().getBoundingClientRect().width;
-      const height = +svg.node().getBoundingClientRect().height;
-      const simulation = d3.forceSimulation();
-      const forceProperties = {
-          center: {x: 0.5, y: 0.5},
-          charge: {enabled: true, strength: -30, distanceMin: 1, distanceMax: 2000},
-          collide: {enabled: true, strength: 7, iterations: 1, radius: 100},
-          forceX: {enabled: false, strength: 1, x: 5},
-          forceY: {enabled: false, strength: 1, y: 5},
-          link: {enabled: true, distance: 200, iterations: 1}
-      }
 
       function loadVis(twineDoc) {
         const storyData = twineDoc.getElementsByTagName("tw-storydata")[0];
@@ -47,38 +39,104 @@
         // Links between nodes are currently children of "from" nodes themselves.
         // We need to grab them into a separate array to pass to d3.
         let links = [];
-        nodes.forEach( node => links.push(...node.links.map(link => childLinkToStandaloneLink(link, node.id))) );
+        nodes.forEach( node => links.push(...node.links));
+        console.log(links);
 
         // Link nodes up
         links.forEach( link => { link.sourceNode = nodeMapByName.get(link.source); link.targetNode = nodeMapByName.get(link.target); } )
 
         //We need to work out where to plot each node by link depth from the start
-        console.log(nodes);
         annotateNodesByDepth(nodes);
-        console.log(nodes);
 
         const link = svg.append("g").attr("class", "links").selectAll("line").data(links).join(linkEnter);
         const node = svg.append("g").attr("class", "nodes").selectAll("circle").data(nodes).join(nodeEnter)
                         .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
 
         function linkEnter(enter) {
-          return enter.append("line");
+          return enter.append("line").attr("id", d=>"link-"+d.sourceNode.pid+"-"+d.targetNode.pid)
+                                     .attr("x1", d=>d.sourceNode.x + clamp(d.targetNode.x+d.targetNode.width/2, d.sourceNode.x, d.sourceNode.width))
+                                     .attr("y1", d=>d.sourceNode.y)
+                                     .attr("x2", d=>d.targetNode.x + clamp(d.sourceNode.x+d.sourceNode.width/2, d.targetNode.x, d.targetNode.width))
+                                     .attr("y2", d=>d.targetNode.y);
         }
+
         function nodeEnter(enter) {
           const nodeGroup = enter.append("g").attr("transform", d => `translate(${d.x},${d.y})`);
           nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
           nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                   .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,50));
+                   .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100));
+          nodeGroup.on("mouseover", (ev, d) => downstreamHighlight(d, true) )
+                   .on("mouseout", (ev, d) => downstreamHighlight(d, false) );
           return nodeGroup;
         }
-        //function initializeSimulation() { simulation.nodes(nodes); initializeForces(links); simulation.on("tick", e => ticked(link, node)); }
-        //initializeSimulation();
+
+        function nodeUpdate(update) {
+               update.select("g").transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
+                      .attr("visibility", d => d.isBelowHighestCollapsed() ? "hidden" : "visible")
+               .attr("class", nodeClass)
+               .attr("x", nodeXPos)
+               .attr("y", d=>SYMBOL_HALFHEIGHT*(d.top()))
+               .attr("height", d=>SYMBOL_HALFHEIGHT*(d.height()));
+        }
+
+        const width = Math.max(...nodes.map(node => node.x+node.width))
+        console.log(width)
+        svg.style("width", Math.max(...nodes.map(node => node.x+node.width))+'px');
+        svg.style("height", Math.max(...nodes.map(node => node.y+node.height))+'px');
+      }
+
+      function downstreamHighlight(d, highlightState) {
+        if (d.links.length === 0) return;
+        //const highlightLinks = new Set();
+        //let currentLink = d.links[0];
+        //do {
+        //  highlightLinks.add(currentLink);
+        //} while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[0]) );
+        const highlightLinks = new DownstreamPath(d).getPath();
+        console.log(highlightLinks);
+        if (highlightState === true) {
+          highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.add("highlighted"));
+        } else {
+          highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.remove("highlighted"));
+        }
+      }
+
+      class DownstreamPath {
+        constructor(rootNode) {
+          this.linkPath = this.calcPath(rootNode);
+        }
+        calcPath(rootNode) {
+          this.linkPath = [];
+          let currentLink = rootNode.links[0];
+          const NEXT_INDEX = 0;
+          do {
+            this.linkPath.push(currentLink);
+          } while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[NEXT_INDEX]) );
+          return this.linkPath;
+        }
+        getPath() {
+          return this.linkPath;
+        }
+        switchLinkLeft(linkDepth) {
+          // Get node one along in parents child array at requested depth
+          const oldNode = this.linkPath[linkDepth];
+          const oldNodeParent = this.linkPath[linkDepth-1];
+          const oldNodeIdx = oldNodeParent.links.findIndex(oldNode);
+          const newNode = oldNodeParent.links[oldNodeIdx + 1 % oldNodeParent.links.length];
+          // Slice off everything below old node's parent
+          this.linkPath = this.linkPath.slice(0, linkDepth);
+          // Stick on new calculated tree
+          this.linkPath = this.linkPath.concat(this.getPath(newNode));
+        }
+        switchLinkRight(linkDepth) {
+
+        }
       }
 
       function passageDataElemToObj(elem) {
         const xyPositions = elem.getAttribute("position").split(",", 2);
         const xySizes = elem.getAttribute("size").split(",", 2);
-        return {
+        const node = {
           "pid": elem.getAttribute("pid"),
           "id": elem.getAttribute("name"),  // CONFUSION WARNING. Only called "id" for compatibility with d3-force!
           "text": elem.innerText,
@@ -86,33 +144,27 @@
           "y": parseInt(xyPositions[1]),
           "width": parseInt(xySizes[0]),
           "height": parseInt(xySizes[0]),
-          "links": passageDataElemToLinks(elem)
         }
+        node.links = passageDataElemToLinks(node)
+        return node;
       }
 
-      function passageDataElemToLinks(elem) {
+      function passageDataElemToLinks(node) {
         let links = [];
-        const literalLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_LITERAL_LINK_REGEX));
-        const rightLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_RIGHT_LINK_REGEX));
-        const leftLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_LEFT_LINK_REGEX));
+        const literalLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_LITERAL_LINK_REGEX));
+        const rightLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_RIGHT_LINK_REGEX));
+        const leftLinkMatches = Array.from(node.text.matchAll(TWINE_PASSAGEDATA_LEFT_LINK_REGEX));
         links.push(
-                ...literalLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.target}) ),
-                ...rightLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value}) ),
-                ...leftLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value}) )
+                ...literalLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.target, "source":node.id}) ),
+                ...rightLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value, "source":node.id}) ),
+                ...leftLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value, "source":node.id}) )
         );
         return links;
-      }
-
-      function childLinkToStandaloneLink(link, source_name) {
-        // TODO: Side effects. BAD!!
-        link.source = source_name;
-        return link;
       }
 
       function annotateNodesByDepth(nodes) {
         const firstNode = nodes[0];
         const recurseAnnotate = (node, currentDepth) => {
-          console.log(node.id);
           if (node.depth!==undefined) return;
           node.depth = currentDepth;
           if(node.links===undefined) return;
@@ -122,42 +174,17 @@
         firstNode.links.forEach(link => recurseAnnotate(link.targetNode, 1));
       }
 
-      function ticked(link, node) {
-          link.attr("x1", function(d) { return d.source.x; }).attr("y1", function(d) { return d.source.y; }).attr("x2", function(d) { return d.target.x; }).attr("y2", function(d) { return d.target.y; });
-          node.attr("transform", d => `translate(${d.x},${d.y})` );d3.select('#alpha_value').style('flex-basis', (simulation.alpha()*100) + '%');
-      }
-
       function dragstarted(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
       function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
       function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
-
-      // add forces to the simulation
-      function initializeForces(links) {
-          // add forces and associate each with a name
-          simulation.force("link", d3.forceLink())
-              .force("charge", d3.forceManyBody())
-              .force("collide", d3.forceCollide())
-              .force("center", d3.forceCenter())
-              .force("forceX", d3.forceX())
-              .force("forceY", d3.forceY());
-          updateForces(links);
-      }
-
-      function updateForces(links) {
-          simulation.force("center").x(width * forceProperties.center.x).y(height * forceProperties.center.y);
-          simulation.force("charge").strength(forceProperties.charge.strength * forceProperties.charge.enabled).distanceMin(forceProperties.charge.distanceMin).distanceMax(forceProperties.charge.distanceMax);
-          simulation.force("collide").strength(forceProperties.collide.strength * forceProperties.collide.enabled).radius(forceProperties.collide.radius).iterations(forceProperties.collide.iterations);
-          simulation.force("forceX").strength(forceProperties.forceX.strength * forceProperties.forceX.enabled).x(width * forceProperties.forceX.x);
-          simulation.force("forceY").strength(forceProperties.forceY.strength * forceProperties.forceY.enabled).y(height * forceProperties.forceY.y);
-          simulation.force("link").id(function(d) {return d.id;}).distance(forceProperties.link.distance).iterations(forceProperties.link.iterations).links(forceProperties.link.enabled ? links : []);
-          simulation.alpha(1).restart();
-      }
 
       function createSvgForeignTextObject(text) {
 
       }
       fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
-
+      function clamp(val, max, min) {
+        return Math.min(Math.max(val,max),min);
+      }
     </script>
   </body>
 </html>

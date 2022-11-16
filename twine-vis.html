@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body, #twine-graph {height: 100%; width:100%;margin:0;padding:0;}
+      body { background-color: black; }
+      .links line {stroke: #aaa;}
+      .nodes rect {fill: black; stroke: #aaa; stroke-width: 3px;}
+      .nodes div {color: white;}
+      p {color:white;}
+    </style>
+  </head>
+  <body>
+    <svg id="twine-graph" xmlns:xhtml="http://www.w3.org/1999/xhtml"></svg>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <script>
+      const TWINE_FILE_PATH = "Quack of Duckness.html";
+      const TWINE_PASSAGEDATA_LITERAL_LINK_REGEX = /\[\[(?<target>[A-Za-z0-9 _]+)\]\]/g;
+      const TWINE_PASSAGEDATA_RIGHT_LINK_REGEX = /\[\[(?<value>[A-Za-z0-9 _]+)->(?<target>[A-Za-z0-9 _]+)\]\]/g;
+      const TWINE_PASSAGEDATA_LEFT_LINK_REGEX = /\[\[(?<target>[A-Za-z0-9 _]+)<-(?<value>[A-Za-z0-9 _]+)\]\]/g;
+      const NODE_WIDTH = 192;
+      const NODE_HEIGHT = 144;
+      const parser = new DOMParser();
+
+      const svg = d3.select("svg");
+      const width = svg.node().getBoundingClientRect().width;
+      const height = +svg.node().getBoundingClientRect().height;
+      const simulation = d3.forceSimulation();
+      const forceProperties = {
+          center: {x: 0.5, y: 0.5},
+          charge: {enabled: true, strength: -30, distanceMin: 1, distanceMax: 2000},
+          collide: {enabled: true, strength: 7, iterations: 1, radius: 100},
+          forceX: {enabled: false, strength: 1, x: 5},
+          forceY: {enabled: false, strength: 1, y: 5},
+          link: {enabled: true, distance: 200, iterations: 1}
+      }
+
+      function loadVis(twineDoc) {
+        const storyData = twineDoc.getElementsByTagName("tw-storydata")[0];
+        // Make "node" objects from XML file
+        const nodes = Array.from(storyData.getElementsByTagName("tw-passagedata")).map(elem => passageDataElemToObj(elem));
+
+        // Create a handy map of nodes from node names for fast lookup.
+        const nodeMapByName = new Map();
+        nodes.forEach( node => nodeMapByName.set(node.id, node) );
+
+        // Links between nodes are currently children of "from" nodes themselves.
+        // We need to grab them into a separate array to pass to d3.
+        let links = [];
+        nodes.forEach( node => links.push(...node.links.map(link => childLinkToStandaloneLink(link, node.id))) );
+
+        // Link nodes up
+        links.forEach( link => { link.sourceNode = nodeMapByName.get(link.source); link.targetNode = nodeMapByName.get(link.target); } )
+
+        //We need to work out where to plot each node by link depth from the start
+        console.log(nodes);
+        annotateNodesByDepth(nodes);
+        console.log(nodes);
+
+        const link = svg.append("g").attr("class", "links").selectAll("line").data(links).join(linkEnter);
+        const node = svg.append("g").attr("class", "nodes").selectAll("circle").data(nodes).join(nodeEnter)
+                        .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
+
+        function linkEnter(enter) {
+          return enter.append("line");
+        }
+        function nodeEnter(enter) {
+          const nodeGroup = enter.append("g").attr("transform", d => `translate(${d.x},${d.y})`);
+          nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
+          nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
+                   .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,50));
+          return nodeGroup;
+        }
+        //function initializeSimulation() { simulation.nodes(nodes); initializeForces(links); simulation.on("tick", e => ticked(link, node)); }
+        //initializeSimulation();
+      }
+
+      function passageDataElemToObj(elem) {
+        const xyPositions = elem.getAttribute("position").split(",", 2);
+        const xySizes = elem.getAttribute("size").split(",", 2);
+        return {
+          "pid": elem.getAttribute("pid"),
+          "id": elem.getAttribute("name"),  // CONFUSION WARNING. Only called "id" for compatibility with d3-force!
+          "text": elem.innerText,
+          "x": parseInt(xyPositions[0]),
+          "y": parseInt(xyPositions[1]),
+          "width": parseInt(xySizes[0]),
+          "height": parseInt(xySizes[0]),
+          "links": passageDataElemToLinks(elem)
+        }
+      }
+
+      function passageDataElemToLinks(elem) {
+        let links = [];
+        const literalLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_LITERAL_LINK_REGEX));
+        const rightLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_RIGHT_LINK_REGEX));
+        const leftLinkMatches = Array.from(elem.innerText.matchAll(TWINE_PASSAGEDATA_LEFT_LINK_REGEX));
+        links.push(
+                ...literalLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.target}) ),
+                ...rightLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value}) ),
+                ...leftLinkMatches.map( match => ({"target": match.groups.target, "value": match.groups.value}) )
+        );
+        return links;
+      }
+
+      function childLinkToStandaloneLink(link, source_name) {
+        // TODO: Side effects. BAD!!
+        link.source = source_name;
+        return link;
+      }
+
+      function annotateNodesByDepth(nodes) {
+        const firstNode = nodes[0];
+        const recurseAnnotate = (node, currentDepth) => {
+          console.log(node.id);
+          if (node.depth!==undefined) return;
+          node.depth = currentDepth;
+          if(node.links===undefined) return;
+          node.links.forEach(link => recurseAnnotate(link.targetNode, currentDepth+1));
+        };
+        firstNode.depth = 0;
+        firstNode.links.forEach(link => recurseAnnotate(link.targetNode, 1));
+      }
+
+      function ticked(link, node) {
+          link.attr("x1", function(d) { return d.source.x; }).attr("y1", function(d) { return d.source.y; }).attr("x2", function(d) { return d.target.x; }).attr("y2", function(d) { return d.target.y; });
+          node.attr("transform", d => `translate(${d.x},${d.y})` );d3.select('#alpha_value').style('flex-basis', (simulation.alpha()*100) + '%');
+      }
+
+      function dragstarted(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+      function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
+      function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
+
+      // add forces to the simulation
+      function initializeForces(links) {
+          // add forces and associate each with a name
+          simulation.force("link", d3.forceLink())
+              .force("charge", d3.forceManyBody())
+              .force("collide", d3.forceCollide())
+              .force("center", d3.forceCenter())
+              .force("forceX", d3.forceX())
+              .force("forceY", d3.forceY());
+          updateForces(links);
+      }
+
+      function updateForces(links) {
+          simulation.force("center").x(width * forceProperties.center.x).y(height * forceProperties.center.y);
+          simulation.force("charge").strength(forceProperties.charge.strength * forceProperties.charge.enabled).distanceMin(forceProperties.charge.distanceMin).distanceMax(forceProperties.charge.distanceMax);
+          simulation.force("collide").strength(forceProperties.collide.strength * forceProperties.collide.enabled).radius(forceProperties.collide.radius).iterations(forceProperties.collide.iterations);
+          simulation.force("forceX").strength(forceProperties.forceX.strength * forceProperties.forceX.enabled).x(width * forceProperties.forceX.x);
+          simulation.force("forceY").strength(forceProperties.forceY.strength * forceProperties.forceY.enabled).y(height * forceProperties.forceY.y);
+          simulation.force("link").id(function(d) {return d.id;}).distance(forceProperties.link.distance).iterations(forceProperties.link.iterations).links(forceProperties.link.enabled ? links : []);
+          simulation.alpha(1).restart();
+      }
+
+      function createSvgForeignTextObject(text) {
+
+      }
+      fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
+
+    </script>
+  </body>
+</html>

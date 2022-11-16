@@ -3,18 +3,20 @@
   <head>
     <style>
       /*html, body, #twine-graph {height: 100%; width:100%;margin:0;padding:0;}*/
-      body { background-color: black; font-size: 0.8rem; }
+      body { background-color: black; font-size: 0.8rem; font-family: sans-serif; color: white; }
       .links line {stroke: #aaa;}
       .links line.highlighted {stroke: #f00;}
       .nodes rect { fill: black; stroke: #aaa; stroke-width: 3px; }
-      .nodes div { color: white; }
     </style>
   </head>
   <body>
+    <fieldset>
+        <legend>Open story file</legend>
+        <input type="file" id="twine-file-input" accept="text/html"><br>
+    </fieldset>
     <svg id="twine-graph" xmlns:xhtml="http://www.w3.org/1999/xhtml"></svg>
     <script src="https://d3js.org/d3.v6.min.js"></script>
     <script>
-      const TWINE_FILE_PATH = "Stink Bug Plague.html";
       const TWINE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
       const NODE_WIDTH = 192;
       const NODE_HEIGHT = 144;
@@ -285,12 +287,22 @@
       //function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
       //function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
 
-      fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
+      // Hardcoded file load for testing purposes.
+      //fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
 
       function clamp(val, max, min) {
         return Math.min(Math.max(val,max),min);
       }
 
+  document.getElementById("twine-file-input").addEventListener("change", readTwineFile);
+  function readTwineFile() {
+    const reader = new FileReader();
+    const file = document.getElementById("twine-file-input").files[0];
+    if (file) {
+      reader.readAsText(file);
+    }
+    reader.addEventListener("load", function (ev) {loadVis(parser.parseFromString(ev.target.result,"text/html"))});
+  }
 
     </script>
   </body>

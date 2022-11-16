@@ -6,8 +6,8 @@
       body { background-color: black; font-size: 0.8rem; }
       .links line {stroke: #aaa;}
       .links line.highlighted {stroke: #f00;}
-      .nodes rect {fill: black; stroke: #aaa; stroke-width: 3px;}
-      .nodes div {color: white;}
+      .nodes rect { fill: black; stroke: #aaa; stroke-width: 3px; }
+      .nodes div { color: white; }
     </style>
   </head>
   <body>
@@ -20,6 +20,7 @@
       const NODE_HEIGHT = 144;
       const ANIMATION_DURATION_MS = 500;
       const ANIMATION_EASING = d3.easeQuadInOut;
+      const NAV_SYMBOL_SIZE = 20;
 
       const DISPLAY_MODES = Object.freeze({
         allNodes:   Symbol("allNodes"),
@@ -71,9 +72,9 @@
           if (rootNode.links.length === 0) return linkPath;
           let currentLink = rootNode.links[0];
           const NEXT_INDEX = 0;
-          // TODO: This is the section that loops really mess up
           do {
             linkPath.push(currentLink);
+            if (linkPath.includes(currentLink)) break;  // TODO: Less terrible loop protection
           } while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[NEXT_INDEX]) );
           return linkPath;
         }
@@ -86,6 +87,12 @@
           return this.linkPath.length > 0 ? this.linkPath[0].sourceNode : null;
         }
 
+        getLinksAtDepth(depth) {
+          if (depth<0) return [];
+          const parentNode = this.linkPath[depth].sourceNode;
+          return parentNode.links;
+        }
+
         swapToAdjacentLink(nodeObj, distance) {
           // We're passed a node that the user wants to switcheroo for an adjacent one.
           // We need to find the index of the link in our array that corresponds to the one linking it to its parent.
@@ -94,7 +101,7 @@
           const parentNode = linkToShift.sourceNode;
           const oldLinkIdx = parentNode.links.indexOf(linkToShift);
           const numLinks = parentNode.links.length;
-          const newLinkIdx = (oldLinkIdx + distance) % numLinks;
+          const newLinkIdx = (oldLinkIdx + distance + numLinks) % numLinks;
           // Get link one along in parents child array at requested depth
           const newLink = parentNode.links[newLinkIdx];
           // Slice off everything below old node's parent
@@ -120,8 +127,11 @@
 
       const parser = new DOMParser();
       const svg = d3.select("svg");
-      const nodesG = svg.append("g").attr("class", "nodes");
+      const defs = svg.append("defs")
+      defs.append("path").attr("id", "leftarrow").attr("fill", "darkred").attr("d", `M 0,${NAV_SYMBOL_SIZE/2} ${NAV_SYMBOL_SIZE},0 ${NAV_SYMBOL_SIZE},${NAV_SYMBOL_SIZE} Z`)
+      defs.append("path").attr("id", "rightarrow").attr("fill", "darkred").attr("d", `M 0,0 0,${NAV_SYMBOL_SIZE} ${NAV_SYMBOL_SIZE},${NAV_SYMBOL_SIZE/2} Z`)
       const linksG = svg.append("g").attr("class", "links");
+      const nodesG = svg.append("g").attr("class", "nodes");  // Put nodes after links in SVG so they render on top
       let highlightedPath = new StoryPath();
       let links;
       let nodes;
@@ -155,7 +165,7 @@
 
       function drawNetwork() {
         const link = linksG.selectAll("line").data(links).join(linkEnter, linkUpdate);
-        const node = nodesG.selectAll("g").data(nodes).join(nodeEnter, nodeUpdate)
+        const node = nodesG.selectAll("g.node").data(nodes).join(nodeEnter, nodeUpdate)
         //                .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
       }
 
@@ -179,20 +189,23 @@
       }
 
       function nodeEnter(enter) {
-        const nodeGroup = enter.append("g");
+        const nodeGroup = enter.append("g").attr("class", "node");
         nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100));
-        nodeGroup.on("click", (ev, d) => toggleLinearDisplay(d))
-                 .on("wheel", (ev, d) => shiftLinearPath(d));
+                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id + "\n" + d.text.substring(0,100)).on("click", (ev, d) => toggleLinearDisplay(d));
+        const pathControls = nodeGroup.append("g").attr("class", "path-controls").attr("transform", "translate(0,-15)");
+        pathControls.append("use").attr("xlink:href", "#leftarrow").on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, -1)})
+        pathControls.append("use").attr("xlink:href", "#rightarrow").attr("x", 100-NAV_SYMBOL_SIZE).on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, 1)})
         nodeUpdate(nodeGroup);
         return nodeGroup;
       }
 
       function nodeUpdate(update) {
         update.transition().duration(ANIMATION_DURATION_MS).ease(ANIMATION_EASING)
-               .style("opacity", d => nodeVisibility(d) ? 1 : 0)
+               .style("opacity", d => nodeVisibility(d) ? 1 : 0.2)
                .attr("transform", d => `translate(${nodeX(d)},${nodeY(d)})`);
+        update.select("g.path-controls")
+               .attr("opacity", d => currentDisplayMode === DISPLAY_MODES.linear && nodeVisibility(d) && highlightedPath.getLinksAtDepth(highlightedPath.getNodeDepth(d)-1).length > 1 ? 1 : 0);
         return update;
       }
 
@@ -213,9 +226,9 @@
         drawNetwork();
       }
 
-      function shiftLinearPath(d) {
+      function shiftLinearPath(d, distance) {
         highlight(highlightedPath, false);
-        highlightedPath.swapToAdjacentLink(d, 1);
+        highlightedPath.swapToAdjacentLink(d, distance);
         //highlight(highlightedPath, true);
         drawNetwork();
       }
@@ -224,7 +237,7 @@
         if (currentDisplayMode === DISPLAY_MODES.allNodes) {
           return d.x
         } else {
-          return highlightedPath.getHeadNode().x;
+          return highlightedPath.containsNode(d) ? highlightedPath.getHeadNode().x : d.x;
         }
       }
 
@@ -232,7 +245,7 @@
         if (currentDisplayMode === DISPLAY_MODES.allNodes) {
           return d.y
         } else {
-          return highlightedPath.getHeadNode().y + 120*highlightedPath.getNodeDepth(d) || 0;  // O if it'll be hidden anyway
+          return highlightedPath.containsNode(d) ? highlightedPath.getHeadNode().y + 120*highlightedPath.getNodeDepth(d) : d.y;  // d.y if it'll be hidden anyway
         }
       }
 

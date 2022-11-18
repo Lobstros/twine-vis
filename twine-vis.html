@@ -178,8 +178,8 @@
 
       function drawNetwork() {
         const link = linksG.selectAll("line").data(links).join(linkEnter, linkUpdate);
-        const node = nodesG.selectAll("g.node").data(nodes).join(nodeEnter, nodeUpdate)
-        //                .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
+        const node = nodesG.selectAll("g.node").data(nodes, d=>d.pid).join(nodeEnter, nodeUpdate)
+                           .sort(d=>nodeVisibility(d));  // Put visible nodes at the end, so they show on top.
       }
 
       function linkEnter(enter) {

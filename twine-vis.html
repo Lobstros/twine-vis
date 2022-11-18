@@ -43,19 +43,29 @@
           this.y = parseInt(xyPositions[1]);
           this.width = parseInt(xySizes[0]);
           this.height = parseInt(xySizes[0]);
-          this.links = StoryNode.#parseLinks(this.text, this.id);
+          this.links = StoryLink.parseFromText(this.text, this.id);
         }
 
-        static #parseLinks(nodeText, source_id) {
-          let links = [];
+      }
+
+      class StoryLink {
+
+        constructor(source, target, descText) {
+          this.source = source;
+          this.target = target;
+          this.value = descText;
+        }
+
+        static parseFromText(text, source_id) {
           let linkComponents;
-          const linkTexts = Array.from(nodeText.matchAll(TWINE_PASSAGEDATA_LINK_REGEX)).map(res => res[1]);  // Return first group (link text) only
+          const linkTexts = Array.from(text.matchAll(TWINE_PASSAGEDATA_LINK_REGEX)).map(res => res[1]);  // Return first group (link text) only
           links = linkTexts.map( linkText => {
             linkComponents = linkText.split("->");
-            if (linkComponents.length > 1) return {"target": linkComponents[1], "value": linkComponents[0], "source":source_id}
+            if (linkComponents.length > 1) return new StoryLink(source_id, linkComponents[1], linkComponents[0]);
             linkComponents = linkText.split("<-");
-            if (linkComponents.length > 1) return {"target": linkComponents[0], "value": linkComponents[1], "source":source_id}
-            return {"target": linkText, "value": linkText, "source":source_id}
+            if (linkComponents.length > 1) return new StoryLink(source_id, linkComponents[0], linkComponents[1]);
+            // Fallthrough: it's a link without a '->' operator, so link target and text description are the same.
+            return new StoryLink(source_id, linkText, linkText);
           })
           return links;
         }

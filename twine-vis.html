@@ -8,6 +8,7 @@
       .links line {stroke: #aaa;}
       .links line.highlighted {stroke: #f00;}
       .nodes rect { fill: black; stroke: #aaa; stroke-width: 3px; }
+      .nodes .mousedOver rect { stroke: #f00; }
     </style>
   </head>
   <body>
@@ -19,11 +20,8 @@
     <script src="https://d3js.org/d3.v6.min.js"></script>
     <script>
       const TWINE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
-      const NODE_WIDTH = 128;
-      const NODE_HEIGHT = 64;
       const ANIMATION_DURATION_MS = 500;
       const ANIMATION_EASING = d3.easeQuadInOut;
-      const NAV_SYMBOL_SIZE = 20;
 
       const DISPLAY_MODES = Object.freeze({
         allNodes:   Symbol("allNodes"),
@@ -44,6 +42,10 @@
           this.width = parseInt(xySizes[0]);
           this.height = parseInt(xySizes[0]);
           this.links = StoryLink.parseFromText(this.text, this.id);
+        }
+
+        getHTMLElement() {
+          return document.getElementById("node-" + this.pid);
         }
 
       }
@@ -70,26 +72,23 @@
           return links;
         }
 
+        getHTMLElement() {
+          return document.getElementById("link-" + this.sourceNode.pid + "-" + this.targetNode.pid);
+        }
+
       }
 
       class StoryPath {
         // Wraps an ordered list of Links that define a legal path through StoryNodes,
         // with helper functions to shift any of these links to neighbours that the reculculates a valid path below it.
         //TODO: Intelligently handle loops
-        constructor(rootNode) {
-          this.linkPath = rootNode ? this.calcPath(rootNode) : [];
+        constructor(headNode) {
+          this.headNode = headNode;  // Hack to have knowledge of where we started before user has selected a first link.
+          this.linkPath = [];
         }
 
-        calcPath(rootNode) {
-          let linkPath = [];
-          if (rootNode.links.length === 0) return linkPath;
-          let currentLink = rootNode.links[0];
-          const NEXT_INDEX = 0;
-          do {
-            linkPath.push(currentLink);
-            if (linkPath.includes(currentLink)) break;  // TODO: Less terrible loop protection
-          } while ( (currentLink.targetNode.links.length > 0) && (currentLink = currentLink.targetNode.links[NEXT_INDEX]) );
-          return linkPath;
+        addLink(link) {
+          this.linkPath.push(link);
         }
 
         getPath() {
@@ -97,7 +96,12 @@
         }
 
         getHeadNode() {
-          return this.linkPath.length > 0 ? this.linkPath[0].sourceNode : null;
+          return this.headNode;
+        }
+
+        getTailNode() {
+          if (this.linkPath.length === 0) return this.headNode;
+          return this.linkPath[this.linkPath.length-1].targetNode;
         }
 
         getLinksAtDepth(depth) {
@@ -124,16 +128,59 @@
           this.linkPath = this.linkPath.concat(this.calcPath(newLink.targetNode));
         }
 
-        containsNode(nodeObj) {
-          return [this.linkPath[0].sourceNode].concat(this.linkPath.map(link => link.targetNode)).includes(nodeObj);
+        potentialNextLinks() {
+          return this.getTailNode().links;
+        }
+
+        potentialNextNodes() {
+          return this.potentialNextLinks().map(link=>link.targetNode);
+        }
+
+        getLinkDepth(linkObj) {
+          const linkIdx = this.linkPath.indexOf(linkObj);
+          if (linkIdx === -1) return undefined;
+          return linkIdx;
         }
 
         getNodeDepth(nodeObj) {
+          // TODO: This should maybe be based off a call to getLinkDepth(), if nodes have ref to parent links?
           // Nodes take the depth of the link they are a parent of, or 1 + the previous if at the end of the path.
           const pathLength = this.linkPath.length;
-          if (pathLength === 0) return 0;
+          // Hack to correctly report head node if no link path yet defined.
+          if (pathLength === 0) {
+            if (this.getHeadNode() === nodeObj) {
+              return 0;
+            }
+            return undefined;
+          }
           if (nodeObj === this.linkPath[pathLength-1].targetNode) return pathLength;
-          return this.linkPath.findIndex( link => link.sourceNode === nodeObj );
+          const nodeIdx = this.linkPath.findIndex( link => link.sourceNode === nodeObj );
+          if (nodeIdx === -1) return undefined;
+          return nodeIdx;
+        }
+
+        containsLink(linkObj) {
+          return this.getLinkDepth(linkObj) !== undefined;
+        }
+
+        containsNode(nodeObj) {
+          return this.getNodeDepth(nodeObj) !== undefined;
+        }
+
+        isPotentialNextLink(linkObj) {
+          return this.potentialNextLinks().includes(linkObj);
+        }
+
+        isPotentialNextNode(nodeObj) {
+          return this.potentialNextNodes().includes(nodeObj);
+        }
+
+        containsOrIsPotentialNextLink(linkObj) {
+          return this.containsLink(linkObj) || this.isPotentialNextLink(linkObj);
+        }
+
+        containsOrIsPotentialNextNode(nodeObj) {
+          return this.containsNode(nodeObj) || this.isPotentialNextNode(nodeObj);
         }
 
       }
@@ -141,8 +188,6 @@
       const parser = new DOMParser();
       const svg = d3.select("svg");
       const defs = svg.append("defs")
-      defs.append("path").attr("id", "leftarrow").attr("fill", "darkred").attr("d", `M 0,${NAV_SYMBOL_SIZE/2} ${NAV_SYMBOL_SIZE},0 ${NAV_SYMBOL_SIZE},${NAV_SYMBOL_SIZE} Z`)
-      defs.append("path").attr("id", "rightarrow").attr("fill", "darkred").attr("d", `M 0,0 0,${NAV_SYMBOL_SIZE} ${NAV_SYMBOL_SIZE},${NAV_SYMBOL_SIZE/2} Z`)
       const linksG = svg.append("g").attr("class", "links");
       const nodesG = svg.append("g").attr("class", "nodes");  // Put nodes after links in SVG so they render on top
       let highlightedPath = new StoryPath();
@@ -169,9 +214,10 @@
         //We need to work out where to plot each node by link depth from the start
         annotateNodesByDepth(nodes);
 
-        const width = Math.max(...nodes.map(node => node.x+node.width))
-        svg.style("width", Math.max(...nodes.map(node => node.x+node.width))+'px');
-        svg.style("height", Math.max(...nodes.map(node => node.y+node.height))+'px');
+        const desiredWidth = Math.max(...nodes.map(node => node.x+node.width))+window.innerWidth;
+        const desiredHeight = Math.max(...nodes.map(node => node.y+node.height))+window.innerHeight;
+        svg.style("width", desiredWidth.toString() + 'px');
+        svg.style("height", desiredHeight.toString() + 'px');
 
         drawNetwork();
       }
@@ -198,17 +244,18 @@
               .attr("y1", d=>nodeY(d.sourceNode) + d.sourceNode.height/2)
               .attr("x2", d=>nodeX(d.targetNode) + d.targetNode.width/2)
               .attr("y2", d=>nodeY(d.targetNode) + d.targetNode.height/2)
-              .attr("visibility", currentDisplayMode === DISPLAY_MODES.allNodes ? "visible" : "hidden");
+              .attr("visibility", d => currentDisplayMode === DISPLAY_MODES.allNodes || highlightedPath.containsOrIsPotentialNextLink(d) ? "visible" : "hidden")
+              .attr("stroke-dasharray", d => currentDisplayMode === DISPLAY_MODES.linear && highlightedPath.isPotentialNextLink(d) ? "10,10" : "");
       }
 
       function nodeEnter(enter) {
-        const nodeGroup = enter.append("g").attr("class", "node");
-        nodeGroup.append("rect").attr("width", NODE_WIDTH).attr("height", NODE_HEIGHT);
+        const nodeGroup = enter.append("g").attr("id", d=>"node-"+d.pid).attr("class", "node")
+                               .on("click", (ev, d) => toggleLinearDisplay(d))
+                               .on("mouseover", (ev, d) => d.getHTMLElement().classList.add("mousedOver"))
+                               .on("mouseout", (ev, d) => d.getHTMLElement().classList.remove("mousedOver"));
+        nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id).on("click", (ev, d) => toggleLinearDisplay(d));
-        const pathControls = nodeGroup.append("g").attr("class", "path-controls").attr("transform", "translate(0,-15)");
-        pathControls.append("use").attr("xlink:href", "#leftarrow").on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, -1)})
-        pathControls.append("use").attr("xlink:href", "#rightarrow").attr("x", 100-NAV_SYMBOL_SIZE).on("click", (ev, d) => {ev.stopPropagation(); shiftLinearPath(d, 1)})
+                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id);
         nodeUpdate(nodeGroup);
         return nodeGroup;
       }
@@ -229,12 +276,13 @@
           drawNetwork();
           return;
         }
-        highlightedPath = new StoryPath(d);
-        if (highlightedPath.getPath().length > 0) {  // Deny zero-length paths (they don't calc/render properly)
-          currentDisplayMode = DISPLAY_MODES.linear;
-        } else {
-          currentDisplayMode = DISPLAY_MODES.allNodes;
+        if (currentDisplayMode === DISPLAY_MODES.linear && highlightedPath.potentialNextNodes().includes(d)) {
+          highlightedPath.addLink(highlightedPath.getTailNode().links.find(link=>link.targetNode===d));
+          drawNetwork();
+          return;
         }
+        highlightedPath = new StoryPath(d);
+        currentDisplayMode = DISPLAY_MODES.linear;
         highlight(highlightedPath, true);
         drawNetwork();
       }
@@ -250,7 +298,13 @@
         if (currentDisplayMode === DISPLAY_MODES.allNodes) {
           return d.x
         } else {
-          return highlightedPath.containsNode(d) ? highlightedPath.getHeadNode().x : d.x;
+          // Check if node part of path
+          if (highlightedPath.containsNode(d)) return highlightedPath.getHeadNode().x
+          // If node is a target of last path link, show with all
+          const potentialNextNodes = highlightedPath.potentialNextNodes();
+          const potNextNodeIdx = potentialNextNodes.indexOf(d);
+          if (potNextNodeIdx !== -1) return highlightedPath.getHeadNode().x + ((potNextNodeIdx - 0.5 * (potentialNextNodes.length-1)) * 1.3 * d.width)
+          return d.x;
         }
       }
 
@@ -258,7 +312,11 @@
         if (currentDisplayMode === DISPLAY_MODES.allNodes) {
           return d.y
         } else {
-          return highlightedPath.containsNode(d) ? highlightedPath.getHeadNode().y + 120*highlightedPath.getNodeDepth(d) : d.y;  // d.y if it'll be hidden anyway
+          if (highlightedPath.containsNode(d))
+            return highlightedPath.getHeadNode().y + 1.3*d.height*highlightedPath.getNodeDepth(d);
+          if (highlightedPath.potentialNextNodes().includes(d))
+            return highlightedPath.getHeadNode().y + 1.3*d.height*(highlightedPath.linkPath.length + 1);
+          return d.y;
         }
       }
 
@@ -266,7 +324,7 @@
         if (currentDisplayMode === DISPLAY_MODES.allNodes) {
           return true;
         } else {
-          return highlightedPath.containsNode(d);
+          return highlightedPath.containsOrIsPotentialNextNode(d);
         }
       }
 
@@ -274,9 +332,9 @@
         if (!path) return;
         const highlightLinks = path.getPath();
         if (highlightState === true) {
-          highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.add("highlighted"));
+          highlightLinks.forEach(link => link.getHTMLElement().classList.add("highlighted"));
         } else {
-          highlightLinks.forEach(link => document.getElementById("link-" + link.sourceNode.pid + "-" + link.targetNode.pid).classList.remove("highlighted"));
+          highlightLinks.forEach(link => link.getHTMLElement().classList.remove("highlighted"));
         }
       }
 
@@ -291,15 +349,6 @@
         firstNode.depth = 0;
         firstNode.links.forEach(link => recurseAnnotate(link.targetNode, 1));
       }
-
-      //let dragging = false;
-      //document.getElementById("twine-graph").addEventListener( "mousedown", e => dragging=true )
-      //function dragstarted(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
-      //function dragged(ev, d) { d.fx = ev.x; d.fy = ev.y; }
-      //function dragended(ev, d) { if (!ev.active) simulation.alphaTarget(0.0001); d.fx = null; d.fy = null; }
-
-      // Hardcoded file load for testing purposes.
-      //fetch(TWINE_FILE_PATH).then(response => response.text()).then(textData => loadVis(parser.parseFromString(textData,"text/html")));
 
       function clamp(val, max, min) {
         return Math.min(Math.max(val,max),min);

@@ -48,42 +48,42 @@
           return document.getElementById("node-" + this.pid);
         }
 
-      xPosition(){
-        // TODO: inject `highlightedPath` external dependency.
-        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
-          return this.x
-        } else {
-          // Check if node part of path
-          if (highlightedPath.containsNode(this)) return highlightedPath.getHeadNode().x
-          // If node is a target of last path link, show with all
-          const potentialNextNodes = highlightedPath.potentialNextNodes();
-          const potNextNodeIdx = potentialNextNodes.indexOf(this);
-          if (potNextNodeIdx !== -1) return highlightedPath.getHeadNode().x + ((potNextNodeIdx - 0.5 * (potentialNextNodes.length-1)) * 1.3 * this.width)
-          return this.x;
+        xPosition(){
+          // TODO: inject `highlightedPath` external dependency.
+          if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+            return this.x
+          } else {
+            // Check if node part of path
+            if (highlightedPath.containsNode(this)) return highlightedPath.getHeadNode().x
+            // If node is a target of last path link, show with all
+            const potentialNextNodes = highlightedPath.potentialNextNodes();
+            const potNextNodeIdx = potentialNextNodes.indexOf(this);
+            if (potNextNodeIdx !== -1) return highlightedPath.getHeadNode().x + ((potNextNodeIdx - 0.5 * (potentialNextNodes.length-1)) * 1.3 * this.width)
+            return this.x;
+          }
         }
-      }
 
-      yPosition() {
-        // TODO: inject `highlightedPath` external dependency.
-        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
-          return this.y
-        } else {
-          if (highlightedPath.containsNode(this))
-            return highlightedPath.getHeadNode().y + 1.3*this.height*highlightedPath.getNodeDepth(this);
-          if (highlightedPath.potentialNextNodes().includes(this))
-            return highlightedPath.getHeadNode().y + 1.3*this.height*(highlightedPath.linkPath.length + 1);
-          return this.y;
+        yPosition() {
+          // TODO: inject `highlightedPath` external dependency.
+          if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+            return this.y
+          } else {
+            if (highlightedPath.containsNode(this))
+              return highlightedPath.getHeadNode().y + 1.3*this.height*highlightedPath.getNodeDepth(this);
+            if (highlightedPath.potentialNextNodes().includes(this))
+              return highlightedPath.getHeadNode().y + 1.3*this.height*(highlightedPath.linkPath.length + 1);
+            return this.y;
+          }
         }
-      }
 
-      visibility() {
-        // TODO: inject `highlightedPath` external dependency.
-        if (currentDisplayMode === DISPLAY_MODES.allNodes) {
-          return true;
-        } else {
-          return highlightedPath.containsOrIsPotentialNextNode(this);
+        visibility() {
+          // TODO: inject `highlightedPath` external dependency.
+          if (currentDisplayMode === DISPLAY_MODES.allNodes) {
+            return true;
+          } else {
+            return highlightedPath.containsOrIsPotentialNextNode(this);
+          }
         }
-      }
 
       }
 

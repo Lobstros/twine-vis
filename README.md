@@ -1,9 +1,7 @@
 # twine-vis
 
-A prototype webapp for easily walking/visualising link routes in published Twine files.
+A prototype webapp for easily visualising link routes in published Twine files.
 
-To run:
+Drop in to an existing folder served by a web server, or run for local testing:
 
-    python -m http.server
-
-Then visit http://localhost/twine-vis.html.
+    python -m http.server  # Visit http://localhost:8000/twine-vis.html to view.

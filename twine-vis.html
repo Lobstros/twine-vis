@@ -35,13 +35,13 @@
           const xyPositions = htmlElem.getAttribute("position").split(",", 2);
           const xySizes = htmlElem.getAttribute("size").split(",", 2);
           this.pid = htmlElem.getAttribute("pid");
-          this.id = htmlElem.getAttribute("name");  // CONFUSION WARNING. Only called "id" for compatibility with d3-force!
+          this.name = htmlElem.getAttribute("name");
           this.text = htmlElem.innerText;
           this.x = parseInt(xyPositions[0]);
           this.y = parseInt(xyPositions[1]);
           this.width = parseInt(xySizes[0]);
           this.height = parseInt(xySizes[0]);
-          this.links = StoryLink.parseFromText(this.text, this.id);
+          this.links = StoryLink.parseFromText(this.text, this.name);
         }
 
         getHTMLElement() {
@@ -201,7 +201,7 @@
 
         // Create a handy map of nodes from node names for fast lookup.
         const nodeMapByName = new Map();
-        nodes.forEach( node => nodeMapByName.set(node.id, node) );
+        nodes.forEach( node => nodeMapByName.set(node.name, node) );
 
         // Links between nodes are currently children of "from" nodes themselves.
         // We need to grab them into a separate array to pass to d3.
@@ -255,7 +255,7 @@
                                .on("mouseout", (ev, d) => d.getHTMLElement().classList.remove("mousedOver"));
         nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
-                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.id);
+                 .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.name);
         nodeUpdate(nodeGroup);
         return nodeGroup;
       }

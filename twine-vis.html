@@ -44,8 +44,12 @@
           this.links = StoryLink.parseFromText(this.text, this.name);
         }
 
-        getHTMLElement() {
-          return document.getElementById("node-" + this.pid);
+        get htmlElementId() {
+          return "node-" + this.pid;
+        }
+
+        get htmlElement() {
+          return document.getElementById(this.htmlElementId);
         }
 
         xPosition(){
@@ -109,8 +113,12 @@
           return links;
         }
 
-        getHTMLElement() {
-          return document.getElementById("link-" + this.sourceNode.pid + "-" + this.targetNode.pid);
+        get htmlElementId() {
+            return "link-" + this.sourceNode.pid + "-" + this.targetNode.pid;
+        }
+
+        get htmlElement() {
+          return document.getElementById(this.htmlElementId);
         }
 
       }
@@ -266,8 +274,8 @@
       }
 
       function linkEnter(enter) {
-        const linkLine = enter.append("line")
-        linkLine.attr("id", d=>"link-"+d.sourceNode.pid+"-"+d.targetNode.pid)
+        const linkLine = enter.append("line");
+        linkLine.attr("id", d=>d.htmlElementId);
         linkUpdate(linkLine);
       }
 
@@ -286,10 +294,10 @@
       }
 
       function nodeEnter(enter) {
-        const nodeGroup = enter.append("g").attr("id", d=>"node-"+d.pid).attr("class", "node")
+        const nodeGroup = enter.append("g").attr("id", d=>d.htmlElementId).attr("class", "node")
                                .on("click", (ev, d) => toggleLinearDisplay(d))
-                               .on("mouseover", (ev, d) => d.getHTMLElement().classList.add("mousedOver"))
-                               .on("mouseout", (ev, d) => d.getHTMLElement().classList.remove("mousedOver"));
+                               .on("mouseover", (ev, d) => d.htmlElement.classList.add("mousedOver"))
+                               .on("mouseout", (ev, d) => d.htmlElement.classList.remove("mousedOver"));
         nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
                  .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.name);
@@ -337,9 +345,9 @@
         if (!path) return;
         const highlightLinks = path.getPath();
         if (highlightState === true) {
-          highlightLinks.forEach(link => link.getHTMLElement().classList.add("highlighted"));
+          highlightLinks.forEach(link => link.htmlElement.classList.add("highlighted"));
         } else {
-          highlightLinks.forEach(link => link.getHTMLElement().classList.remove("highlighted"));
+          highlightLinks.forEach(link => link.htmlElement.classList.remove("highlighted"));
         }
       }
 

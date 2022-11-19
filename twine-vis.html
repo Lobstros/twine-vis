@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en-GB">
   <head>
     <title>Twine story visualiser</title>
     <style>
@@ -58,11 +58,11 @@
             return this.x
           } else {
             // Check if node part of path
-            if (highlightedPath.containsNode(this)) return highlightedPath.getHeadNode().x
+            if (highlightedPath.containsNode(this)) return highlightedPath.getHeadNode().x;
             // If node is a target of last path link, show with all
             const potentialNextNodes = highlightedPath.potentialNextNodes();
             const potNextNodeIdx = potentialNextNodes.indexOf(this);
-            if (potNextNodeIdx !== -1) return highlightedPath.getHeadNode().x + ((potNextNodeIdx - 0.5 * (potentialNextNodes.length-1)) * 1.3 * this.width)
+            if (potNextNodeIdx !== -1) return highlightedPath.getHeadNode().x + ((potNextNodeIdx - 0.5 * (potentialNextNodes.length-1)) * 1.3 * this.width);
             return this.x;
           }
         }
@@ -109,7 +109,7 @@
             if (linkComponents.length > 1) return new StoryLink(source_id, linkComponents[0], linkComponents[1]);
             // Fallthrough: it's a link without a '->' operator, so link target and text description are the same.
             return new StoryLink(source_id, linkText, linkText);
-          })
+          });
           return links;
         }
 
@@ -232,7 +232,7 @@
 
       const parser = new DOMParser();
       const svg = d3.select("svg");
-      const defs = svg.append("defs")
+      const defs = svg.append("defs");
       const linksG = svg.append("g").attr("class", "links");
       const nodesG = svg.append("g").attr("class", "nodes");  // Put nodes after links in SVG so they render on top
       let highlightedPath = new StoryPath();
@@ -254,7 +254,7 @@
         nodes.forEach( node => links.push(...node.links));
 
         // Link nodes up
-        links.forEach( link => { link.sourceNode = nodeMapByName.get(link.source); link.targetNode = nodeMapByName.get(link.target); } )
+        links.forEach( link => { link.sourceNode = nodeMapByName.get(link.source); link.targetNode = nodeMapByName.get(link.target); } );
 
         //We need to work out where to plot each node by link depth from the start
         annotateNodesByDepth(nodes);
@@ -339,8 +339,6 @@
         drawNetwork();
       }
 
-
-
       function highlight(path, highlightState) {
         if (!path) return;
         const highlightLinks = path.getPath();
@@ -367,15 +365,15 @@
         return Math.min(Math.max(val,max),min);
       }
 
-  document.getElementById("twine-file-input").addEventListener("change", readTwineFile);
-  function readTwineFile() {
-    const reader = new FileReader();
-    const file = document.getElementById("twine-file-input").files[0];
-    if (file) {
-      reader.readAsText(file);
-    }
-    reader.addEventListener("load", function (ev) {loadVis(parser.parseFromString(ev.target.result,"text/html"))});
-  }
+      document.getElementById("twine-file-input").addEventListener("change", readTwineFile);
+      function readTwineFile() {
+        const reader = new FileReader();
+        const file = document.getElementById("twine-file-input").files[0];
+        if (file) {
+          reader.readAsText(file);
+        }
+        reader.addEventListener("load", function (ev) {loadVis(parser.parseFromString(ev.target.result,"text/html"))});
+      }
 
     </script>
   </body>

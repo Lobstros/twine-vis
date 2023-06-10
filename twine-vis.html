@@ -9,6 +9,8 @@
       .links line.highlighted {stroke: #f00;}
       .nodes rect { fill: black; stroke: #aaa; stroke-width: 3px; }
       .nodes .mousedOver rect { stroke: #f00; }
+      #infopane { position: fixed; top: 0; right: 0; background-color: black; max-width: 20vw; border: 3px solid white; display: none }
+      #infopane dt { margin-top: 1rem; }
     </style>
   </head>
   <body>
@@ -16,11 +18,21 @@
         <legend>Open story file</legend>
         <input type="file" id="twine-file-input" accept="text/html"><br>
     </fieldset>
+    <div id="infopane">
+      <h2 id="infopane-name"></h2>
+      <dl>
+        <dt>Text snippet</dt><dd id="infopane-text-snippet"></dd>
+        <dt>Linked to by <output id="infopane-linked-to-by-count"></output> node(s)</dt><dd id="infopane-linked-to-by"></dd>
+        <dt>Links to <output id="infopane-links-to-count"></output> node(s)</dt><dd id="infopane-links-to"></dd>
+        <dt><output id="infopane-conditions-count"></output> <em>if</em>s</dt><dd><ul id="infopane-conditions-list"></ul></dd></dl>
+        </dl>
+    </div>
     <svg id="twine-graph" xmlns:xhtml="http://www.w3.org/1999/xhtml"></svg>
     <script src="https://d3js.org/d3.v6.min.js"></script>
     <script>
-      const TWINE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
-      const ANIMATION_DURATION_MS = 500;
+      const SUGARCUBE_PASSAGEDATA_LINK_REGEX = /\[\[(.+?)\]\]/g;
+      const SUGARCUBE_PASSAGEDATA_IF_REGEX = /<<if (.+?)>>/g;
+      const ANIMATION_DURATION_MS = 350;
       const ANIMATION_EASING = d3.easeQuadInOut;
 
       const DISPLAY_MODES = Object.freeze({
@@ -42,6 +54,7 @@
           this.width = parseInt(xySizes[0]);
           this.height = parseInt(xySizes[0]);
           this.links = StoryLink.parseFromText(this.text, this.name);
+          this.conditions = StoryCondition.parseFromText(this.text);
         }
 
         get htmlElementId() {
@@ -52,12 +65,16 @@
           return document.getElementById(this.htmlElementId);
         }
 
+        linkedToBy() {
+            return links.filter(link => link.targetNode === this);
+        }
+
         xPosition(){
           // TODO: inject `highlightedPath` external dependency.
           if (currentDisplayMode === DISPLAY_MODES.allNodes) {
             return this.x
           } else {
-            // Check if node part of path
+            // Check if node part of path; if so, return x of head node.
             if (highlightedPath.containsNode(this)) return highlightedPath.getHeadNode().x;
             // If node is a target of last path link, show with all
             const potentialNextNodes = highlightedPath.potentialNextNodes();
@@ -72,6 +89,7 @@
           if (currentDisplayMode === DISPLAY_MODES.allNodes) {
             return this.y
           } else {
+            // Check if node part of path; if so, return y of head node plus space for number of nodes above.
             if (highlightedPath.containsNode(this))
               return highlightedPath.getHeadNode().y + 1.3*this.height*highlightedPath.getNodeDepth(this);
             if (highlightedPath.potentialNextNodes().includes(this))
@@ -101,7 +119,7 @@
 
         static parseFromText(text, source_id) {
           let linkComponents;
-          const linkTexts = Array.from(text.matchAll(TWINE_PASSAGEDATA_LINK_REGEX)).map(res => res[1]);  // Return first group (link text) only
+          const linkTexts = Array.from(text.matchAll(SUGARCUBE_PASSAGEDATA_LINK_REGEX)).map(res => res[1]);  // Return first group (link text) only
           links = linkTexts.map( linkText => {
             linkComponents = linkText.split("->");
             if (linkComponents.length > 1) return new StoryLink(source_id, linkComponents[1], linkComponents[0]);
@@ -174,7 +192,8 @@
         }
 
         potentialNextLinks() {
-          return this.getTailNode().links;
+          const tailNode = this.getTailNode();
+          return tailNode ? tailNode.links : [];
         }
 
         potentialNextNodes() {
@@ -226,6 +245,19 @@
 
         containsOrIsPotentialNextNode(nodeObj) {
           return this.containsNode(nodeObj) || this.isPotentialNextNode(nodeObj);
+        }
+
+      class StoryCondition {
+
+        constructor(condition, text) {
+          this.condition = condition;
+          this.text = text;
+        }
+
+        static parseFromText(allText) {
+          const textsByCondition = Array.from(allText.matchAll(SUGARCUBE_PASSAGEDATA_IF_REGEX))
+                                         .map(res => new StoryCondition(res[1], ""));
+          return textsByCondition;
         }
 
       }
@@ -296,8 +328,8 @@
       function nodeEnter(enter) {
         const nodeGroup = enter.append("g").attr("id", d=>d.htmlElementId).attr("class", "node")
                                .on("click", (ev, d) => toggleLinearDisplay(d))
-                               .on("mouseover", (ev, d) => d.htmlElement.classList.add("mousedOver"))
-                               .on("mouseout", (ev, d) => d.htmlElement.classList.remove("mousedOver"));
+                               .on("mouseover", (ev, d) => {d.htmlElement.classList.add("mousedOver"); showInfopane(d); })
+                               .on("mouseout", (ev, d) => {d.htmlElement.classList.remove("mousedOver"); hideInfopane(d);});
         nodeGroup.append("rect").attr("width", d=>d.width).attr("height", d=>d.height);
         nodeGroup.append("foreignObject").attr("width", d=>d.width).attr("height", d=>d.height)
                  .append("xhtml:div").attr("xmlns", "http://www.w3.org/1999/xhtml").text(d=>d.name);
@@ -365,6 +397,23 @@
         return Math.min(Math.max(val,max),min);
       }
 
+      function showInfopane(d) {
+        const infoPane = document.getElementById("infopane");
+        infoPane.style.display = "block";
+        document.getElementById("infopane-name").innerText = d.name;
+        document.getElementById("infopane-text-snippet").innerText = d.text.substring(0,100);
+        document.getElementById("infopane-linked-to-by-count").innerText = d.linkedToBy().length.toString();
+        document.getElementById("infopane-linked-to-by").innerText = d.linkedToBy().map(link => link.sourceNode.name).join(", ");
+        document.getElementById("infopane-links-to-count").innerText = d.links.length.toString();
+        document.getElementById("infopane-links-to").innerText = d.links.map(link => link.targetNode.name).join(", ");
+        document.getElementById("infopane-conditions-count").innerText = d.conditions.length.toString();
+        document.getElementById("infopane-conditions-list").innerHTML = d.conditions.map(cond => "<li>"+cond.condition+"</li>").join("");
+      }
+
+      function hideInfopane() {
+        document.getElementById("infopane").style.display = "none";
+      }
+
       document.getElementById("twine-file-input").addEventListener("change", readTwineFile);
       function readTwineFile() {
         const reader = new FileReader();
@@ -372,7 +421,7 @@
         if (file) {
           reader.readAsText(file);
         }
-        reader.addEventListener("load", function (ev) {loadVis(parser.parseFromString(ev.target.result,"text/html"))});
+        reader.addEventListener("load", function (ev) {loadVis(parser.parseFromString(ev.target.result.toString(),"text/html"))});
       }
 
     </script>

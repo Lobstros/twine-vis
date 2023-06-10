@@ -35,6 +35,11 @@
       const ANIMATION_DURATION_MS = 350;
       const ANIMATION_EASING = d3.easeQuadInOut;
 
+      // This ENUM defines the manner in which the currently loaded file is drawn on-screen:
+      // "allNodes" is when all nodes are displayed fully in their position dictated by the saved markup.
+      // "linear" is a modal view entered when focusing on a given node: The selected node keeps its position,
+      // and downstream nodes move to line up underneath it. Upstream nodes, or downstream nodes that are more distant
+      // descendants than the current display level, are faded into the background.
       const DISPLAY_MODES = Object.freeze({
         allNodes:   Symbol("allNodes"),
         linear:  Symbol("linear")
